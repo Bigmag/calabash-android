@@ -79,27 +79,6 @@ module Calabash module Android
       ]
     end
 
-    def reinstall_apps
-      default_device.reinstall_apps
-    end
-
-    def reinstall_test_server
-      default_device.reinstall_test_server
-    end
-
-    def install_app(app_path)
-      default_device.install_app(app_path)
-    end
-
-    def update_app(app_path)
-      default_device.update_app(app_path)
-    end
-
-    def uninstall_apps
-      default_device.uninstall_app(package_name(default_device.test_server_path))
-      default_device.uninstall_app(package_name(default_device.app_path))
-    end
-
     def wake_up
       default_device.wake_up()
     end
@@ -114,10 +93,6 @@ module Calabash module Android
 
     def push(local, remote)
       default_device.push(local, remote)
-    end
-
-    def calabash_stop_app
-      default_device.calabash_stop_app
     end
 
     def client_version
@@ -254,65 +229,6 @@ module Calabash module Android
         forward_cmd = "#{adb_command} forward tcp:#{server.endpoint.port} tcp:#{server.test_server_port}"
         @logger.log forward_cmd
         @logger.log `#{forward_cmd}`
-      end
-
-      def reinstall_apps
-        uninstall_app(package_name(@app_path))
-        uninstall_app(package_name(@test_server_path))
-        install_app(@app_path)
-        install_app(@test_server_path)
-      end
-
-      def reinstall_test_server
-        uninstall_app(package_name(@test_server_path))
-        install_app(@test_server_path)
-      end
-
-      def install_app(app_path)
-        cmd = "#{adb_command} install \"#{app_path}\""
-        @logger.log "Installing: #{app_path}"
-        result = `#{cmd}`
-        @logger.log result
-        pn = package_name(app_path)
-        succeeded = `#{adb_command} shell pm list packages`.lines.map{|line| line.chomp.sub("package:", "")}.include?(pn)
-
-        unless succeeded
-          ::Cucumber.wants_to_quit = true
-          raise "#{pn} did not get installed. Reason: '#{result.lines.last.chomp}'. Aborting!"
-        end
-      end
-
-      def update_app(app_path)
-        cmd = "#{adb_command} install -r \"#{app_path}\""
-        @logger.log "Updating: #{app_path}"
-        result = `#{cmd}`
-        @logger.log "result: #{result}"
-        succeeded = result.include?("Success")
-
-        unless succeeded
-          ::Cucumber.wants_to_quit = true
-          raise "#{pn} did not get updated. Aborting!"
-        end
-      end
-
-      def uninstall_app(package_name)
-        @logger.log "Uninstalling: #{package_name}"
-        @logger.log `#{adb_command} uninstall #{package_name}`
-
-        succeeded = !(`#{adb_command} shell pm list packages`.lines.map{|line| line.chomp.sub("package:", "")}.include?(package_name))
-
-        unless succeeded
-          ::Cucumber.wants_to_quit = true
-          raise "#{package_name} was not uninstalled. Aborting!"
-        end
-      end
-
-      def app_running?
-        begin
-          http("/ping") == "pong"
-        rescue
-          false
-        end
       end
 
       def keyguard_enabled?
@@ -501,11 +417,6 @@ module Calabash module Android
         end
       end
 
-      def clear_app_data
-        cmd = "#{adb_command} shell am instrument #{package_name(@test_server_path)}/sh.calaba.instrumentationbackend.ClearAppData"
-        raise "Could not clear data" unless system(cmd)
-      end
-
       def pull(remote, local)
         cmd = "#{adb_command} pull #{remote} #{local}"
         raise "Could not pull #{remote} to #{local}" unless system(cmd)
@@ -514,105 +425,6 @@ module Calabash module Android
       def push(local, remote)
         cmd = "#{adb_command} push #{local} #{remote}"
         raise "Could not push #{local} to #{remote}" unless system(cmd)
-      end
-
-      def calabash_start_app(application, options={})
-        raise "Will not start test server because of previous failures." if ::Cucumber.wants_to_quit
-
-        if keyguard_enabled?
-          wake_up
-        end
-
-        env_options = options.dup
-
-        env_options[:test_server_port] ||= server.test_server_port
-        env_options[:class] ||= 'sh.calaba.instrumentationbackend.InstrumentationBackend'
-        env_options[:target_package] ||= application.identifier
-        env_options[:main_activity] ||= application.main_activity
-
-        cmd_arr = [adb_command, "shell am instrument"]
-
-        env_options.each_pair do |key, val|
-          cmd_arr << "-e"
-          cmd_arr << key.to_s
-          cmd_arr << val.to_s
-        end
-
-        cmd_arr << "#{application.test_server.identifier}/sh.calaba.instrumentationbackend.CalabashInstrumentationTestRunner"
-
-        cmd = cmd_arr.join(" ")
-
-        @logger.log "Starting test server using:"
-        @logger.log cmd
-
-        raise "Could not execute command to start test server" unless system("#{cmd} 2>&1")
-
-        retriable :tries => 10, :interval => 1 do
-          raise "App did not start" unless app_running?
-        end
-
-        begin
-          retriable :tries => 10, :interval => 3 do
-            @logger.log "Checking if instrumentation backend is ready"
-
-            @logger.log "Is app running? #{app_running?}"
-            ready = http("/ready", {}, {:read_timeout => 1})
-            if ready != "true"
-              @logger.log "Instrumentation backend not yet ready"
-              raise "Not ready"
-            else
-              @logger.log "Instrumentation backend is ready!"
-            end
-          end
-        rescue Exception => e
-
-          msg = "Unable to make connection to Calabash Test Server at http://127.0.0.1:#{@server_port}/\n"
-          msg << "Please check the logcat output for more info about what happened\n"
-          raise msg
-        end
-
-        @logger.log "Checking client-server version match..."
-
-        begin
-          server_version = server_version()
-        rescue
-          msg = ["Unable to obtain Test Server version. "]
-          msg << "Please run 'reinstall_test_server' to make sure you have the correct version"
-          msg_s = msg.join("\n")
-          @logger.log(msg_s)
-          raise msg_s
-        end
-
-        client_version = client_version()
-
-        unless server_version == client_version
-          msg = ["Calabash Client and Test-server version mismatch."]
-          msg << "Client version #{client_version}"
-          msg << "Test-server version #{server_version}"
-          msg << "Expected Test-server version #{client_version}"
-          msg << "\n\nSolution:\n\n"
-          msg << "Run 'reinstall_test_server' to make sure you have the correct version"
-          msg_s = msg.join("\n")
-          @logger.log(msg_s)
-          raise msg_s
-        end
-
-        @logger.log("Client and server versions match (client: #{client_version}, server: #{server_version}). Proceeding...")
-      end
-
-      def calabash_stop_app
-        begin
-          http("/kill")
-          Timeout::timeout(3) do
-            sleep 0.3 while app_running?
-          end
-        rescue HTTPClient::KeepAliveDisconnected
-          @logger.log ("Server not responding. Moving on.")
-        rescue Timeout::Error
-          @logger.log ("Could not kill app. Waited to 3 seconds.")
-        rescue EOFError
-          @logger.log ("Could not kill app. App is most likely not running anymore.")
-        end
       end
 
       ##location
