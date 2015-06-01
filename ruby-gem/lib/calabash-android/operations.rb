@@ -103,10 +103,6 @@ module Calabash module Android
       default_device.server_version
     end
 
-    def fail(msg="Error. Check log for details.", options={:prefix => nil, :name => nil, :label => nil})
-      screenshot_and_raise(msg, options)
-    end
-
     def set_gps_coordinates_from_location(location)
       default_device.set_gps_coordinates_from_location(location)
     end
@@ -553,15 +549,6 @@ module Calabash module Android
 
     def label(uiquery)
       ni
-    end
-
-    def screenshot_and_raise(msg, options = nil)
-      if options
-        screenshot_embed options
-      else
-        screenshot_embed
-      end
-      raise(msg)
     end
 
     def hide_soft_keyboard
